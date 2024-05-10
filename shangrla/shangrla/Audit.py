@@ -2,6 +2,7 @@ import math
 import numpy as np
 import json
 import csv
+import types
 import warnings
 from collections import OrderedDict, defaultdict
 from cryptorandom.cryptorandom import SHA256, random, int_from_hash
@@ -45,7 +46,7 @@ class Stratum:
 ##########################################################################################
 class NpEncoder(json.JSONEncoder):
     '''
-    for json dumps of Audit, Assertion, Contest
+    for json dumps of Audit, Assertion, Contest, Stratum
     '''
     def default(self, obj):
         if isinstance(obj, np.integer):
@@ -54,11 +55,13 @@ class NpEncoder(json.JSONEncoder):
             return float(obj)
         if isinstance(obj, np.ndarray):
             return obj.tolist()
+        if isinstance(obj, np.bool_):
+            return bool(obj)
         if isinstance(obj, Assertion):
-            return obj.__str__()
-        if isinstance(obj, Audit):
-            return obj.__str__()
-        if isinstance(obj, Contest):
+            return obj.to_dict()
+        if isinstance(obj, (Audit, Contest, Stratum)):
+            return obj.__dict__
+        if isinstance(obj, types.FunctionType):
             return obj.__str__()
         return super(NpEncoder, self).default(obj)
 
@@ -978,6 +981,24 @@ class Assertion:
                 f'assorter upper bound: {self.assorter.upper_bound}'
                )
 
+    def to_dict(self):
+        '''
+        Support serialization of the minimal set of relevant ivars; this prevents circular reference when
+        attempting to serialize all of self._dict__ (since the Assertion class contains a Contest reference
+        and a Contest contains a dict of Assertions)
+        '''
+        return {
+            "contest": self.contest.id,
+            "winner": self.winner,
+            "loser": self.loser,
+            "p_value": self.p_value,
+            "margin": self.margin,
+            "length_p_history": len(self.p_history),
+            "proved": self.proved,
+            "sample_size": self.sample_size,
+            "assorter_upper_bound": self.assorter.upper_bound,
+        }
+    
     def min_p(self):
         return min(self.p_history)
 
