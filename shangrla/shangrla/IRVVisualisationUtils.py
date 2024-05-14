@@ -67,7 +67,7 @@ def parseAssertions(auditfile,candidatefile):
     #FIXME: Hardcoded to draw only the first audit for now,
     # though it parses all of them.
     # 'first' isn't even well-defined for a DICT so this needs to be fixed.
-    if 'seed' in auditfile:
+    if 'Audit' in auditfile and 'seed' in auditfile['Audit']:
         # Assume this is formatted like a log file from assertion-RLA.
         RLALogfile = True
         for contestNum in auditfile["contests"]:
@@ -77,19 +77,20 @@ def parseAssertions(auditfile,candidatefile):
                 auditsArray.append(contest)
             else:
                 warn("IRV Visualisations: visualising a non-IRV assertion set.")
+                auditsArray.append(contest)
                 
-            if len(contest["reported_winners"]) != 1:
+            if contest["n_winners"] != 1:
                 warn("IRV contest with either zero or >1 winner")
         
         audit = auditsArray[0]  
-        apparentWinner = audit["reported_winners"][0]
+        apparentWinner = audit["winner"][0]
         print("apparentWinner = "+apparentWinner)
         print("candidates = "+str(audit["candidates"]))
         apparentNonWinners = audit["candidates"].copy()    
         apparentNonWinners.remove(apparentWinner)
         #apparentNonWinners = audit["candidates"].remove(apparentWinner)
         print("apparent Non Winners: "+ str(apparentNonWinners))
-        assertions = audit["assertion_json"]
+        assertions = audit["assertions"]
                
     else:
         # Assume this is formatted like the assertions output from RAIRE
@@ -120,7 +121,7 @@ def parseAssertions(auditfile,candidatefile):
     # in the second element of the tuple.
     IRVElims = []
 
-    for a in assertions:     
+    for a in assertions.values():     
             
         if RLALogfile:
             # We need to recreate the tags used by the assertion-RLA notebook to identify IRV
@@ -129,12 +130,12 @@ def parseAssertions(auditfile,candidatefile):
             # 'winner v loser elim '
             handle = a["winner"] + ' v ' + a["loser"] + ' '
             
-            if a["assertion_type"]=="IRV_ELIMINATION":
+            if "assertion_type" in a.keys() and a["assertion_type"]=="IRV_ELIMINATION":
                 elim = [e for e in a['already_eliminated']]
                 handle += ('elim ' + ' '.join(elim))
             
-            if ("proved" in audit):     
-                proved  = audit["proved"][handle]
+            if "proved" in a:
+                proved = a["proved"]
             else:
                 warn("No proved information in log file - assuming all unconfirmed.")
                 proved = False
@@ -144,8 +145,8 @@ def parseAssertions(auditfile,candidatefile):
             else:
                 proved = False  
                 
-        if a["assertion_type"]=="WINNER_ONLY":
-            if a["already_eliminated"] != "" :
+        if "assertion_type" not in a.keys() or a["assertion_type"]=="WINNER_ONLY":
+            if "already_eliminated" in a.keys() and a["already_eliminated"] != "" :
                 # VT: Not clear whether we should go on or quit at this point.
                 warn("Error: Not-Eliminated-Before assertion with nonempty already_eliminated list.")
                 
@@ -153,7 +154,7 @@ def parseAssertions(auditfile,candidatefile):
             w = a["winner"]
             WOLosers.append((l,w,proved))
                     
-        if a["assertion_type"]=="IRV_ELIMINATION":
+        if "assertion_type" in a.keys() and a["assertion_type"]=="IRV_ELIMINATION":
             l = a["winner"]
             IRVElims.append((l,set(a["already_eliminated"]),proved))
             
