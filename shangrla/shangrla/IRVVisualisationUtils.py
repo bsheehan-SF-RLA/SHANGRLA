@@ -90,7 +90,15 @@ def parseAssertions(auditfile,candidatefile):
         apparentNonWinners.remove(apparentWinner)
         #apparentNonWinners = audit["candidates"].remove(apparentWinner)
         print("apparent Non Winners: "+ str(apparentNonWinners))
+
+        # SHANGRLA IRV contest audits write an "assertion_json" section to the log.json file,
+        # while plurality audits do not
         assertions = audit["assertions"]
+        try:
+            assertion_json = audit["assertion_json"]
+        except KeyError:
+            assertion_json = []
+    
                
     else:
         # Assume this is formatted like the assertions output from RAIRE
@@ -121,42 +129,49 @@ def parseAssertions(auditfile,candidatefile):
     # in the second element of the tuple.
     IRVElims = []
 
-    for a in assertions.values():     
+    for index, a in enumerate(assertions.values()):
+
+        # Extract the "assertion_json" dict, if present
+        try:
+            a_detail = assertion_json[index]
+        except IndexError:
+            a_detail = {}
             
+        # RLA writes bools as valid JSON bools
         if RLALogfile:
-            # We need to recreate the tags used by the assertion-RLA notebook to identify IRV
-            # assertions.  Note that a WO assertion is tagged 'winner v loser '
-            # but an IRVElim assertion with an empty already-eliminated set is tagged
-            # 'winner v loser elim '
-            handle = a["winner"] + ' v ' + a["loser"] + ' '
-            
-            if "assertion_type" in a.keys() and a["assertion_type"]=="IRV_ELIMINATION":
-                elim = [e for e in a['already_eliminated']]
-                handle += ('elim ' + ' '.join(elim))
-            
             if "proved" in a:
                 proved = a["proved"]
             else:
                 warn("No proved information in log file - assuming all unconfirmed.")
                 proved = False
+
+        # RAIRE log writes them as strings it would seem
         else:
             if ("proved" in a) and (a["proved"]=="True"):
                 proved = True
             else:
                 proved = False  
+
+        # Pull winner/loser info from the "assertion_json" dict if available      
+        if "assertion_type" in a_detail.keys():
+            if a_detail["assertion_type"]=="WINNER_ONLY":
+                if a_detail["already_eliminated"] != "":
+                    # VT: Not clear whether we should go on or quit at this point.
+                    warn("Error: Not-Eliminated-Before assertion with nonempty already_eliminated list.")
                 
-        if "assertion_type" not in a.keys() or a["assertion_type"]=="WINNER_ONLY":
-            if "already_eliminated" in a.keys() and a["already_eliminated"] != "" :
-                # VT: Not clear whether we should go on or quit at this point.
-                warn("Error: Not-Eliminated-Before assertion with nonempty already_eliminated list.")
-                
+                l = a_detail["loser"]
+                w = a_detail["winner"]
+                WOLosers.append((l,w,proved))
+        
+            elif a_detail["assertion_type"]=="IRV_ELIMINATION":
+                l = a_detail["winner"]
+                IRVElims.append((l,set(a_detail["already_eliminated"]),proved))
+        
+        # Otherwise, pull it from the "assertion" dict (this assumes non-IRV)
+        else:
             l = a["loser"]
             w = a["winner"]
             WOLosers.append((l,w,proved))
-                    
-        if "assertion_type" in a.keys() and a["assertion_type"]=="IRV_ELIMINATION":
-            l = a["winner"]
-            IRVElims.append((l,set(a["already_eliminated"]),proved))
             
       
                 
