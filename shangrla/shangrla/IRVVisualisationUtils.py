@@ -59,30 +59,43 @@ def buildConfTag(numBoolList):
 # formats, one produced by RAIRE and the other as a log file
 # of the audit process.  Some of the field names are slightly 
 # different.
-def parseAssertions(auditfile,candidatefile):
+def parseAssertions(auditfile,candidatefile,contest_id=None):
     
     RLALogfile = False
     auditsArray = []
     
-    #FIXME: Hardcoded to draw only the first audit for now,
+    # For audit-generated log format, the first is selected by default (i.e. first in
+    # sorted list of IDs - which assumes IDs are string-representations of integers).
+    # The optional contest_id can be passed to select a different contest
+    #
+    # FIXME: for the RAIRE log format, it's hardcoded to draw only the first audit for now,
     # though it parses all of them.
     # 'first' isn't even well-defined for a DICT so this needs to be fixed.
     if 'Audit' in auditfile and 'seed' in auditfile['Audit']:
         # Assume this is formatted like a log file from assertion-RLA.
         RLALogfile = True
-        for contestNum in auditfile["contests"]:
+
+        # Get sorted list of contest IDs (converted back into str format)
+        contestNumList = sorted(list(map(int, auditfile["contests"])))
+        contestNumList = list(map(str, contestNumList))
+
+        auditsDict = {}
+        for contestNum in contestNumList:
             contest = auditfile["contests"][contestNum]
             
             if contest["choice_function"] == "IRV":
-                auditsArray.append(contest)
+                auditsDict[contestNum] = contest
             else:
                 warn("IRV Visualisations: visualising a non-IRV assertion set.")
-                auditsArray.append(contest)
+                auditsDict[contestNum] = contest
                 
             if contest["n_winners"] != 1:
                 warn("IRV contest with either zero or >1 winner")
         
-        audit = auditsArray[0]  
+        try:
+            audit = auditsDict[str(contest_id)]
+        except KeyError:
+            audit = auditsDict[contestNumList[0]]
         apparentWinner = audit["winner"][0]
         print("apparentWinner = "+apparentWinner)
         print("candidates = "+str(audit["candidates"]))
@@ -132,6 +145,8 @@ def parseAssertions(auditfile,candidatefile):
     for index, a in enumerate(assertions.values()):
 
         # Extract the "assertion_json" dict, if present
+        # FIXME - this assumes "assertions" and "assertions_json" occur in the same order, a dubious
+        # assumption at best given these are all DICTs. 
         try:
             a_detail = assertion_json[index]
         except IndexError:
