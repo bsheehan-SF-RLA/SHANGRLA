@@ -48,7 +48,7 @@ def treeListToTuple(t):
 def buildConfTag(numBoolList):
     if len(numBoolList) == 0:
         return "Error: no truth values for this assertion."
-    truthval = (functools.reduce(lambda a,b : a[1] or b[1], numBoolList))[1]
+    truthval = functools.reduce(lambda a,b : (None, a[1] or b[1]), numBoolList)[1]
     if truthval:
         return "Confirmed"
     else:
@@ -189,6 +189,7 @@ def parseAssertions(auditfile,candidatefile,contest_id=None):
             WOLosers.append((l,w,proved))
             
       
+    print(f"{IRVElims=}\n{WOLosers=}")
                 
     return((apparentWinner,apparentWinnerName), apparentNonWinnersWithNames, WOLosers, IRVElims)
 
