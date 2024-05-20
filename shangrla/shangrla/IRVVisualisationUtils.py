@@ -189,8 +189,6 @@ def parseAssertions(auditfile,candidatefile,contest_id=None):
             WOLosers.append((l,w,proved))
             
       
-    print(f"{IRVElims=}\n{WOLosers=}")
-                
     return((apparentWinner,apparentWinnerName), apparentNonWinnersWithNames, WOLosers, IRVElims)
 
 def printTuple(t):
