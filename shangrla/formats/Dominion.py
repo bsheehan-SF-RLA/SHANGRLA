@@ -345,7 +345,7 @@ class Dominion:
     def make_contest(
         id,
         data,
-        risk_limit: float = 0.05,
+        risk_limit: float=0.05,
         assertion_files={},
         audit_type=Audit.AUDIT_TYPE.CARD_COMPARISON,
         test=NonnegMean.alpha_mart,
@@ -383,7 +383,7 @@ class Dominion:
         of assertion files (where the key is the contest ID and the value, a filename, is a string),
         return a dict of contests ready to process with SHANGRLA
         """
-
+    
         # First, get the vote and card tallies from the CVR list.  The returned value is a dict of
         # dicts with two top level keys "votes" and "cards".
         tallies = tally_cvrs(cvr_list)
