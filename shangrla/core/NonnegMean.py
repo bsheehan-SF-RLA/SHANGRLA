@@ -1,5 +1,6 @@
 import math
 import numpy as np
+import scipy as sp
 import warnings
 
 ##########################################################################################
@@ -7,7 +8,7 @@ import warnings
 
 def welford_mean_var(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
-    Welford's algorithm for running mean and variance
+    Welford's online algorithm for the running mean and variance
     """
     m = [x[0]]
     v = [0]
@@ -26,8 +27,8 @@ class NonnegMean:
             Kaplan-Markov (without replacement)
             Kaplan-Wald (without replacement)
             Wald SPRT (with and with replacement)
-            ALPHA supermartingale test (with and without replacement)
-            Betting martingale tests (with and without replacement)
+            ALPHA supermartingale test (with and without replacement, using a variety of estimators)
+            Betting martingale tests (with and without replacement, using a variety of betting rules)
     Some tests work for all nonnegative populations; others require a finite upper bound `u`.
     Many of the tests have versions for sampling with replacement (`N=np.inf`) and for sampling
     without replacement (`N` finite).
@@ -51,7 +52,7 @@ class NonnegMean:
         bet: callable = None,
         u: float = 1,
         N: int = np.inf,
-        t: float = 1 / 2,
+        t: float = 1/2,
         random_order: bool = True,
         **kwargs,
     ):
@@ -180,6 +181,9 @@ class NonnegMean:
         mean is less than or equal to t using a martingale method,
         for a population of size N, based on a series of draws x.
 
+        If kwargs includes `lam`, uses `lam` as a real-valued bet or a vector of real-valued bets.
+        Throws an error if `lam`
+
         **The draws must be in random order**, or the sequence is not a supermartingale under the null
 
         If N is finite, assumes the sample is drawn without replacement
@@ -194,21 +198,26 @@ class NonnegMean:
                 upper bound on the population
             eta: float in (t,u] (default u*(1-eps))
                 value parametrizing the bet. Use alternative hypothesized population mean for polling audit
-                or a value nearer the upper bound for comparison audits
+                or a value nearer the upper bound for card-level comparison audits
 
 
         Returns
         -------
-        p: float
-            sequentially valid p-value of the hypothesis that the population mean is less than or equal to t
-        p_history: numpy array
-            sample by sample history of p-values. Not meaningful unless the sample is in random order.
+        if kwargs.out == 'p-value' (default):
+            p: float or vector of floats
+                sequentially valid p-value of the hypothesis that the population mean is less than or equal to t,
+                for each bet `lam`
+            p_history: numpy array
+                sample by sample history of p-values. Not meaningful unless the sample is in random order.
+        if kwargs.out == 'mart':
+                numpy.array, the martingale / E-value sequence
         """
         N = self.N
         t = self.t
         u = self.u
         atol = kwargs.get("atol", 2 * np.finfo(float).eps)
         rtol = kwargs.get("rtol", 10**-6)
+        out = kwargs.get("out", "p-values")
         _S, Stot, _j, m = self.sjm(N, t, x)
         x = np.array(x)
         with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
@@ -224,14 +233,65 @@ class NonnegMean:
         terms[-1] = (
             np.inf if Stot > N * t else terms[-1]
         )  # final sample makes the total greater than the null
-        return min(1, 1 / np.max(terms)), np.minimum(1, 1 / terms)
+        if out == "p-values":
+            output = min(1, 1 / np.max(terms)), np.minimum(1, 1 / terms)
+        elif out == "mart":
+            output = terms
+        else:
+            raise ValueError("keyword argument \'out\' is misspecified, needs to be in [\'p-values', \'mart\']")
+        return output
+
+    def mix_betting_mart(self, x: np.array, **kwargs) -> tuple[float, np.array]:
+        """
+        Finds a simple discrete mixture martingale as a (flat) average of D TSMs each with fixed bet 'lam'
+
+        If kwargs includes `lam`, uses `lam` as a real-valued bet or a vector of real-valued bets.
+        Throws an error if `lam`
+
+        **The draws must be in random order**, or the sequence is not a supermartingale under the null
+
+        If N is finite, assumes the sample is drawn without replacement
+        If N is infinite, assumes the sample is with replacement
+
+        Parameters
+        ----------
+        x: list corresponding to the data
+        lam: length-D np.array of bets
+        attributes used:
+            keyword arguments for bet() and for this function
+            u: float > 0 (default 1)
+                upper bound on the population
+            lams: a numpy array of bets that will be mixed over; defaults to an equi-spaced length 100 grid on [0,1/t]
+
+        Returns
+        -------
+        p: float or vector of floats
+            sequentially valid p-value of the hypothesis that the population mean is less than or equal to t,
+            for each bet `lam`
+        p_history: numpy array
+            sample by sample history of p-values. Not meaningful unless the sample is in random order.
+        """
+        N = self.N
+        t = self.t
+        u = self.u
+        lams = getattr(self, "lams", np.linspace(0,1/t,100))
+        n = len(x)
+        D = len(lams)
+        marts = np.zeros((D, n))
+        for d in range(D):
+            test = NonnegMean(N=N, u=u, bet=NonnegMean.fixed_bet, lam=lams[d])
+            marts[d,:] = test.betting_mart(x, out='mart')
+        mart = np.mean(marts, 0)
+        return min(1, 1 / np.max(mart)), np.minimum(1, 1 / mart)
+
+
 
     def fixed_alternative_mean(self, x: np.array, **kwargs) -> np.array:
         """
         Compute the alternative mean just before the jth draw, for a fixed alternative that the original population
         mean is eta.
         Throws a warning if the sample implies that the fixed alternative is false (because the population would
-        have negative values or values greater than u.
+        have negative values or values greater than u).
 
         S_1 := 0
         S_j := \sum_{i=1}^{j-1} x_i, j >= 1
@@ -281,7 +341,7 @@ class NonnegMean:
         e_j := c/sqrt(d+j-1)
         sd_1 := sd_2 = 1
         sd_j := sqrt[(\sum_{i=1}^{j-1} (x_i-S_j/(j-1))^2)/(j-2)] \wedge minsd, j>2
-        eta_j :=  ( [(d*eta + S_j)/(d+j-1) + f*u/sd_j]/(1+f/sd_j) \vee (m_j+e_j) ) \wedge u*(1-eps)
+        eta_j :=  ( [(d*eta + S_j)/(d+j-1) + f*u/sd_j]/(1+f/sd_j) \vee (m_j+e_j) ) \wedge (u*(1-eps)-e_j)
 
         Parameters
         ----------
@@ -291,7 +351,8 @@ class NonnegMean:
             eta: float in (t, u) (default u*(1-eps))
                 initial alternative hypothethesized value for the population mean
             c: positive float
-                scale factor for allowing the estimated mean to approach t from above
+                scale factor in constraints to keep the estimator of the mean from getting too close to t or u before
+                the empirical mean is stable
             d: positive float
                 relative weight of eta compared to an observation, in updating the alternative for each term
             f: positive float
@@ -305,7 +366,11 @@ class NonnegMean:
         N = self.N
         t = self.t
         eta = getattr(self, "eta", u * (1 - np.finfo(float).eps))
-        c = getattr(self, "c", 1 / 2)
+        c = getattr(self, "c", (eta-t)/2-np.finfo(float).eps)
+        if u-c < t+c: # constraints could be inconsistent
+            new_c = (u-c)/2
+            warnings.warn(f'{c=} is too large: resetting to {new_c}')
+            c = new_c
         d = getattr(self, "d", 100)
         f = getattr(self, "f", 0)
         minsd = getattr(self, "minsd", 10**-6)
@@ -316,9 +381,10 @@ class NonnegMean:
         sdj = np.insert(np.maximum(sdj, minsd), 0, 1)[0:-1]
         sdj[1] = 1
         weighted = ((d * eta + S) / (d + j - 1) + u * f / sdj) / (1 + f / sdj)
+        tol = c / np.sqrt(d + j - 1)
         return np.minimum(
-            u * (1 - np.finfo(float).eps),
-            np.maximum(weighted, m + c / np.sqrt(d + j - 1)),
+            u * (1 - np.finfo(float).eps) - tol,
+            np.maximum(weighted, m * (1 + np.finfo(float).eps) + tol)
         )
 
     def optimal_comparison(self, x: np.array, **kwargs) -> np.array:
@@ -340,7 +406,7 @@ class NonnegMean:
         ----------
         x: np.array
             input data
-        rate_error_2: float
+        error_rate_2: float
             hypothesized rate of two-vote overstatements
 
         Returns
@@ -349,11 +415,46 @@ class NonnegMean:
             estimated alternative mean to use in alpha
         """
         # set the parameters
-        # TO DO: double check where rate_error_2 is set
-        p2 = getattr(self, "rate_error_2", 1e-4)  # rate of 2-vote overstatement errors
+        # TO DO: double check where error_rate_2 is set
+        p2 = getattr(self, "error_rate_2", 1e-5)  # rate of 2-vote overstatement errors
         return (1 - self.u * (1 - p2)) / (2 - 2 * self.u) + self.u * (1 - p2) - 1 / 2
 
-    def fixed_bet(self, x: np.array, **kwargs) -> np.array:
+    def deriv(lam, x, eta):
+        return np.sum((x - eta) / (1 + lam * (x - eta)))
+
+    def kelly_optimal(self, x: np.array, pop = None, **kwargs):
+        """
+        return the Kelly-optimal bet
+
+        Parameters
+        ----------
+        x: np.array
+            input data
+        pop: optional np.array
+            the population (order does not matter) that will be used to compute the optimal bet
+        Takes x to be the population unless pop is provided
+        """
+        t = self.t # the null mean
+        pop = getattr(self, "pop", None) # attempts to inherit pop from the class
+        if pop is None:
+            pop = x
+        min_slope = NonnegMean.deriv(0, pop, t)
+        max_slope = NonnegMean.deriv(1/t, pop, t)
+        # if the return is always growing, set lambda to the maximum allowed
+        if (min_slope > 0) & (max_slope > 0):
+            out = 1/t
+        # if the return is always shrinking, set lambda to 0
+        elif (min_slope < 0) & (max_slope < 0):
+            out = 0
+        # otherwise, optimize on the interval [0, 1/eta]
+        else:
+            lam_star = sp.optimize.root_scalar(lambda lam: NonnegMean.deriv(lam, pop, t), bracket = [0, 1/t], method = 'bisect')
+            assert lam_star.converged, "Could not find Kelly optimal bet, the optimization may be poorly conditioned"
+            out = lam_star['root']
+        return out * np.ones_like(x)
+
+
+    def fixed_bet(self, x: np.array, lam = None, **kwargs) -> np.array:
         """
         Return a fixed value of lambda, the fraction of the current fortune to bet.
 
@@ -362,9 +463,36 @@ class NonnegMean:
         x: np.array
             input data
 
-        Assumes the instance variable `lam` has been set.
+        Uses the bet `lam` if it is passed; otherwise uses the instance property `lam`
         """
-        return self.lam * np.ones_like(x)
+        lam = lam if lam else self.lam
+        return lam * np.ones_like(x)
+
+    def best_fixed_bet(self, x: np.array, lam: float=0.5, tol: float=1.e-4, **kwargs) -> float:
+        """
+        Finds the best fixed bet `lambda` for the data `x`.
+
+        Intended to be used to find a good bet from simulated data or CVRs on the assumption that the CVRs are
+        accurate.
+
+        It is NOT legitimate to use this retrospectively, only prospectively.
+
+        Parameters
+        ----------
+        x: np.array
+            data
+        lam: float
+            initial guess
+        tol: float
+            tolerance to terminate bisection search
+
+        Returns
+        -------
+        lam: float
+            estimated "best bet" for data x
+        """
+        return lam
+
 
     def agrapa(self, x: np.array, **kwargs) -> np.array:
         """
